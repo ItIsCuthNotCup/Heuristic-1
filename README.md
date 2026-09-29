@@ -30,7 +30,7 @@ single artefact.
 The loop itself is [MetaCog](https://github.com/ItIsCuthNotCup/MetaCog)
 (MIT), vendored as a dependency. Configuration is best-of-N over 8 paths with a
 greedy anchor in the pool and a cascade: if the greedy path already scores
-≥ 0.95 the samples are skipped, which keeps easy questions cheap.
+≥ 0.8 (configurable) the samples are skipped, which keeps easy questions cheap.
 
 ## Results
 
@@ -79,8 +79,29 @@ Or directly:
 python -m heuristic1.server
 ```
 
-Environment: `THINKER_URL`, `THINKER_MODEL`, `JUDGE_URL`, `PORT`, and the
-generation knobs `N_PATHS`, `NO_CASCADE`, `MAX_TOKENS`, `TEMPERATURE`.
+Environment: `THINKER_URL`, `THINKER_MODEL`, `JUDGE_URL`, `PORT`, `MODE`, and the
+generation knobs `N_PATHS`, `NO_CASCADE`, `CASCADE_CONFIDENCE`, `MAX_TOKENS`,
+`TEMPERATURE`, `RACE_CONFIDENCE`, `RACE_SCORE_CHARS`.
+
+## Making it faster
+
+The merge's cost is `N_PATHS` generations per question, so speed work is about
+spending fewer tokens or running the paths at once.
+
+- **`MODE=race`** — the biggest change. Every path streams concurrently and
+  decider re-scores the partial text; the first stream to hit
+  `RACE_CONFIDENCE` (default 0.8) wins and the losers are cancelled mid-flight.
+  Wall-clock drops to ~one generation instead of two serial rounds, and losing
+  paths stop paying tokens early. Two paths agreeing on an answer also end the
+  race early. Requires bonsai's llama-server to run the streams in parallel —
+  launch it with `--parallel N` (≥ `N_PATHS`) or the win collapses.
+- **`CASCADE_CONFIDENCE=0.8`** (now the default) — the greedy path alone answers
+  the question when the judge scores it ≥0.8; only unsure questions pay for
+  extra paths. (The recorded HumanEval rows above used 0.95.)
+- **`N_PATHS=4`** — halves sampling cost; the dial for accuracy vs speed.
+- **`MAX_TOKENS=1000`** — caps each path shorter; most fixes fit.
+- **decider on CPU** — it's a 4B; isolating it keeps its judge forwards off
+  bonsai's GPU bandwidth.
 
 Then talk to it like any OpenAI-compatible endpoint:
 
