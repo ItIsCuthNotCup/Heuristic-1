@@ -1,0 +1,54 @@
+heuristic-1
+Copyright 2026 heuristic-1 contributors
+
+This product includes software and models developed by third parties.
+
+================================================================================
+SOFTWARE — MIT
+================================================================================
+
+MetaCog — the metacognition loop (best-of-N, cascade, judge strategies)
+  Copyright (c) 2026 Jacob Cuthbertson
+  Source:  https://github.com/ItIsCuthNotCup/MetaCog
+  License: MIT
+  Use:     the orchestrator. heuristic-1 depends on it directly and does not
+           vendor a copy. The judgement strategy, the greedy anchor and the
+           cascade are its code, not ours.
+
+  This file is licensed under the MIT License, in the same terms as MetaCog
+  itself. The full text is in LICENSE.
+
+================================================================================
+MODEL WEIGHTS — Apache-2.0
+================================================================================
+
+Bonsai 27B (Ternary / 1-bit / Bonsai 2)
+  Authors:   Prism ML
+  Source:    https://prismml.com/news/bonsai-27b
+  License:   Apache-2.0 (the model repos ship their own LICENSE.txt and
+             NOTICE.txt alongside the GGUF files)
+  Use:       the THINKER — generates the candidate reasoning paths
+  Packing:   ternary {-1,0,+1} 1.71 bpw / binary {-1,+1} 1.125 bpw
+  Note:      the PrismML llama.cpp fork is a separate MIT-licensed artefact.
+             We do not vendor it and do not redistribute any weights; we only
+             talk to a llama-server the operator has already set up.
+
+decider (2B / 4B / 0.8B / 35B-A3B)
+  Authors:   Mapika
+  Source:    https://github.com/Mapika/decider
+  Weights:   https://huggingface.co/Mapika/decider-2b
+             https://huggingface.co/Mapika/decider-4b
+             https://huggingface.co/Mapika/decider-35b-a3b-nvfp4
+  License:   Apache-2.0
+  Use:       the JUDGE — scores each candidate path over /v1/systemone
+  Note:      the wire format is TypeSafe's System One API; the implementation
+             is Mapika's.
+
+================================================================================
+NO WEIGHTS ARE REDISTRIBUTED
+================================================================================
+
+This repository contains code and recorded evaluation rows only. Neither the
+Bonsai nor the decider weights are included, and neither server is vendored.
+Running heuristic-1 requires the operator to obtain and serve both models
+themselves, under their own licences.

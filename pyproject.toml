@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "heuristic-1"
+version = "0.1.0"
+description = "Bonsai 27B as thinker with a decider judge, served as one OpenAI-compatible model"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    # NOT `metacog` from PyPI — that name belongs to an unrelated package
+    # (Metacog AI SDK). The loop lives at ItIsCuthNotCup/MetaCog.
+    "metacog @ git+https://github.com/ItIsCuthNotCup/MetaCog.git",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+heuristic-1 = "heuristic1.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["heuristic1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["heuristic1", "bench"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

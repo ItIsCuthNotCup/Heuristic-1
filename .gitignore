@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# Large regenerated artefacts. The two recorded result files under runs/ are
+# tracked on purpose: they are the evidence behind the README's numbers.
+runs/*
+!runs/he_bonsai_full.jsonl
+!runs/he_merge_full.jsonl
