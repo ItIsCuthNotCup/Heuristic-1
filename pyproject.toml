@@ -21,6 +21,10 @@ dev = ["pytest>=8", "ruff>=0.6"]
 [project.scripts]
 heuristic-1 = "heuristic1.server:main"
 
+[tool.hatch.metadata]
+# the metacog dep is a git pin (a direct reference), not a PyPI name
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["heuristic1"]
 
