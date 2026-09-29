@@ -126,7 +126,46 @@ replies) each move the totals, and none reproduces the originals.
   reproduces the recorded numbers exactly — but it was written afterwards, so
   agreement is necessary, not sufficient, evidence that it is the same script.
 
+## Credits
+
+heuristic-1 is a thin layer over other people's work. None of the intelligence
+here is ours.
+
+- **[Bonsai 2 27B](https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf)** —
+  Prism ML, Apache-2.0. The thinker. 27B reasoning model in ternary weights,
+  ~1.72 bits/weight, 7.21 GB as PQ2_0 GGUF.
+- **[decider](https://huggingface.co/Mapika/decider-4b)** — Mapika
+  (Mark Marosi), Apache-2.0. The judge. A 4B model that reads a state and typed
+  questions and returns calibrated probabilities in one forward pass.
+- **[MetaCog](https://github.com/ItIsCuthNotCup/MetaCog)** — Jacob Cuthbertson,
+  MIT. The metacognition loop: the best-of-N search, the greedy anchor and the
+  cascade that make this a merged model rather than a single generation.
+- **[llama.cpp](https://github.com/PrismML-Eng/llama.cpp)** (PrismML fork, MIT) —
+  the runtime serving the thinker. Stock llama.cpp will not load these files.
+- **[HumanEval](https://arxiv.org/abs/2107.03374)** — Chen et al., 2021. The
+  benchmark and its unit-test oracle.
+
+If you use this, cite Bonsai and decider — both upstream projects ask for it,
+and the credits are theirs:
+
+```bibtex
+@techreport{bonsai2_27b,
+  title  = {Bonsai 2 27B: A 27B Ternary Reasoning Model},
+  author = {Prism ML}, year = {2026}, month = {September},
+  url    = {https://prismml.com}
+}
+@software{marosi2026decider,
+  author = {Marosi, Mark},
+  title  = {decider: one-pass typed decisions with calibrated probabilities},
+  year   = {2026}, url = {https://github.com/Mapika/decider}
+}
+```
+
+Full attributions, including the Qwen base models both fine-tunes derive from,
+are in [`NOTICE`](NOTICE).
+
 ## Licensing
 
-This package is MIT. The models are Apache-2.0: **Bonsai 27B** (Prism ML) and
-**decider** (Mapika). The loop is from MetaCog (MIT). See `NOTICE`.
+This package is MIT — that covers the code in `heuristic1/` and `bench/`, and
+nothing else. The models are Apache-2.0 and are **not redistributed here**;
+operators obtain and serve them themselves. `NOTICE` records the attributions.

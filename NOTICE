@@ -1,48 +1,85 @@
 heuristic-1
 Copyright 2026 heuristic-1 contributors
 
-This product includes software and models developed by third parties.
+This product includes software and models developed by third parties. Their
+work is what this project is built on; the code here is a thin orchestration
+layer over it, and none of it is ours.
 
 ================================================================================
 SOFTWARE — MIT
 ================================================================================
 
-MetaCog — the metacognition loop (best-of-N, cascade, judge strategies)
+MetaCog — the metacognition loop (best-of-N, greedy anchor, cascade, and the
+           judge strategies this configuration uses)
   Copyright (c) 2026 Jacob Cuthbertson
   Source:  https://github.com/ItIsCuthNotCup/MetaCog
   License: MIT
   Use:     the orchestrator. heuristic-1 depends on it directly and does not
-           vendor a copy. The judgement strategy, the greedy anchor and the
-           cascade are its code, not ours.
+           vendor a copy. The default configuration in `heuristic1/server.py`
+           is MetaCog's `best_of_n` mode; the best-of-N search, the greedy
+           anchor and the cascade are its code, not ours.
+  Note:    do not confuse it with the unrelated `metacog` package on PyPI
+           (Metacog AI SDK). The dependency is pinned to the git URL.
 
-  This file is licensed under the MIT License, in the same terms as MetaCog
-  itself. The full text is in LICENSE.
+llama.cpp, PrismML fork — the runtime that serves the thinker
+  Copyright (c) 2023-2026 The ggml authors
+  Source:  https://github.com/PrismML-Eng/llama.cpp  (branch `prism`)
+  License: MIT
+  Use:     the operator's Bonsai server is a `llama-server` from this fork.
+           Stock llama.cpp cannot load these files: it rejects the PQ2_0 and
+           PTQ1_0 types, and loads a file as plain Q2_0 without warning and
+           produces garbage. We do not vendor or build it.
 
 ================================================================================
 MODEL WEIGHTS — Apache-2.0
 ================================================================================
 
-Bonsai 27B (Ternary / 1-bit / Bonsai 2)
+Bonsai 2 27B (ternary; PQ2_0 GGUF)
   Authors:   Prism ML
-  Source:    https://prismml.com/news/bonsai-27b
-  License:   Apache-2.0 (the model repos ship their own LICENSE.txt and
-             NOTICE.txt alongside the GGUF files)
-  Use:       the THINKER — generates the candidate reasoning paths
-  Packing:   ternary {-1,0,+1} 1.71 bpw / binary {-1,+1} 1.125 bpw
-  Note:      the PrismML llama.cpp fork is a separate MIT-licensed artefact.
-             We do not vendor it and do not redistribute any weights; we only
-             talk to a llama-server the operator has already set up.
-
-decider (2B / 4B / 0.8B / 35B-A3B)
-  Authors:   Mapika
-  Source:    https://github.com/Mapika/decider
-  Weights:   https://huggingface.co/Mapika/decider-2b
-             https://huggingface.co/Mapika/decider-4b
-             https://huggingface.co/Mapika/decider-35b-a3b-nvfp4
+  Weights:   https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf
   License:   Apache-2.0
-  Use:       the JUDGE — scores each candidate path over /v1/systemone
-  Note:      the wire format is TypeSafe's System One API; the implementation
-             is Mapika's.
+  Use:       the THINKER — generates the candidate reasoning paths
+  Packing:   PQ2_0, 7.21 GB on disk. Ternary {−1, 0, +1} weights, true
+             ~1.72 bits/weight, stored in a blockwise-Hadamard-rotated basis
+  Citation:  @techreport{bonsai2_27b,
+                 title  = {Bonsai 2 27B: A 27B Ternary Reasoning Model},
+                 author = {Prism ML},
+                 year   = {2026},
+                 month  = {September},
+                 url    = {https://prismml.com}}
+
+decider-4b (v2.1, bf16)
+  Authors:   Mapika  (Mark Marosi)
+  Weights:   https://huggingface.co/Mapika/decider-4b
+  Code:      https://github.com/Mapika/decider
+  License:   Apache-2.0
+  Use:       the JUDGE — scores each candidate path over POST /v1/systemone
+  Citation:  @software{marosi2026decider,
+                 author = {Marosi, Mark},
+                 title  = {decider: one-pass typed decisions with
+                           calibrated probabilities},
+                 year   = {2026},
+                 url    = {https://github.com/Mapika/decider}}
+  Note:      decider is an independent project. It is not affiliated with or
+             endorsed by TypeSafe AI. The `/v1/systemone` wire format is
+             TypeSafe's; the implementation is Mapika's. TypeSafe's hosted
+             judge is called "Jev" in that project's materials. Nothing in
+             heuristic-1 requires TypeSafe software or credentials.
+
+Base models, via the above fine-tunes
+  Bonsai 2 27B derives from Qwen/Qwen3.8-27B; decider-4b derives from
+  Qwen/Qwen3.5-4B-Base. Both inherit the base models' own licences and terms,
+  which the operators of the fine-tunes are responsible for honouring.
+
+================================================================================
+HUMANEVAL
+================================================================================
+
+The benchmark in `bench/run_humaneval.py` and `runs/` is HumanEval
+(Chen et al., 2021, "Evaluating Large Language Models Trained on Code",
+arXiv:2107.03374). The task set and its unit tests are used here as the
+evaluation oracle; the task files are not redistributed in this repository
+and must be obtained from the original source.
 
 ================================================================================
 NO WEIGHTS ARE REDISTRIBUTED
@@ -52,3 +89,11 @@ This repository contains code and recorded evaluation rows only. Neither the
 Bonsai nor the decider weights are included, and neither server is vendored.
 Running heuristic-1 requires the operator to obtain and serve both models
 themselves, under their own licences.
+
+Apache-2.0 requires that recipients of derivative works receive the licence
+text and a copy of the NOTICE. This file records the attributions for
+operators; the full Apache-2.0 text is at
+https://www.apache.org/licenses/LICENSE-2.0 and ships with both models. Since
+no weight or source file of either model is redistributed here, neither
+upstream NOTICE file is reproduced in this repository — reproduce them from
+the upstream projects if you redistribute the models themselves.

@@ -4,8 +4,9 @@ Serve the merge as one OpenAI-compatible model:
 
     python -m heuristic1.server          # :8200, model id "heuristic-1"
 
-Licensing: MIT. The models are Apache-2.0 (Bonsai, Prism ML; decider, Mapika).
-See the repository NOTICE file.
+Licensing: MIT. The models are Apache-2.0 and are not redistributed here —
+Bonsai 2 27B (Prism ML) as thinker, decider-4b (Mapika) as judge. The loop is
+MetaCog (MIT). See the repository NOTICE.
 """
 
 from .server import MODEL_ID, build_mc, clean_answer, serve

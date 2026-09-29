@@ -9,8 +9,9 @@ llama.cpp GGUF path, decider needs a CUDA-graph engine, and they have
 conflicting memory appetites on one GPU. The merge is an orchestration layer,
 not a fused set of weights — one model to the caller, two processes underneath.
 
-Licensing: this package is MIT. The two models are Apache-2.0 (Bonsai, Prism ML;
-decider, Mapika). See the repository NOTICE file.
+Licensing: this package is MIT. The two models it merges are Apache-2.0 and
+are not redistributed here — Bonsai 2 27B (Prism ML) as the thinker, decider-4b
+(Mapika) as the judge. The loop is MetaCog (MIT). See the repository NOTICE.
 """
 
 from __future__ import annotations
