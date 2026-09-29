@@ -7,8 +7,10 @@ produces, and returns the judge's pick. To the caller it is a single model on a
 single endpoint. Underneath it is two GPU processes and an orchestration loop.
 
 On HumanEval it scores **80.5 % against bonsai alone's 68.3 %** on the same 164
-tasks, fixing 22 and breaking 2 (exact McNemar p = 0.000036), at roughly **7.9×
-the thinker tokens**.
+tasks, fixing 22 and breaking 2 (exact McNemar p = 0.000036). Since v1.2 the
+cost profile changed: confident questions now cost ~1 generation, not ~8 —
+measured **~8× faster and ~8× fewer tokens** on easy queries (see the cost
+table below).
 
 ## What it is
 
@@ -54,6 +56,36 @@ judge's ~8.5 forward passes are not tokenised and do not appear there.
 
 `runs/he_bonsai_full.jsonl` and `runs/he_merge_full.jsonl` are the raw recorded
 rows, committed so the numbers above can be checked rather than trusted.
+
+## What v1.2 actually costs
+
+Live measurements on the production setup (bonsai on a DGX Spark, decider on
+its own engine, same question in every arm):
+
+| | wall | thinker tokens |
+|---|---:|---:|
+| heuristic-1 v1.0 (cascade 0.95, best-of-8) | 72.9 s | 2 101 |
+| **v1.2, `CASCADE_CONFIDENCE=0.8` (default)** | **9.0 s** | **251** |
+| v1.2, `MODE=race` | 17.4 s | 251 |
+| bonsai alone (no merge) | 8.9 s | 251 |
+
+Easy question, judge confident ≥0.8 → the greedy answer ships immediately and
+the merge costs ~1 generation, same as calling bonsai directly. That is the
+common case: most of the time the judge's confidence gate makes the merge
+nearly free.
+
+What still costs:
+
+- **Unsure questions still pay for paths.** When greedy scores <0.8 the merge
+  samples up to `N_PATHS` alternatives — that is the accuracy-vs-cost dial,
+  and it is where the +12 points on HumanEval comes from.
+- **`MODE=race` needs server parallelism.** With bonsai at llama-server's
+  default single slot the sampled paths queue serially and race can only kill
+  what has not run yet — on hard questions that is as slow as v1.0. Launch
+  bonsai with `--parallel N` (≥ `N_PATHS`) and race drops hard questions to
+  ~one generation's wall-clock while losers are cancelled mid-flight.
+- **Judge calls aren't in `usage`.** decider's forwards are real compute that
+  never appears in the token counts.
 
 ## Install
 
@@ -138,8 +170,10 @@ replies) each move the totals, and none reproduces the originals.
 - **HumanEval only.** These are code-generation tasks graded by unit tests.
   Nothing here supports a claim about math, GPQA, or general chat, and the
   `usage` numbers say nothing about the judge's own compute cost.
-- **The gain is bought with tokens.** 7.9× is the price of 8 paths. `N_PATHS`
-  is the dial if that is too much.
+- **The gain is bought with tokens.** The recorded 7.9× is the old config
+  (cascade 0.95, which almost never fired). With the v1.2 0.8 cascade, easy
+  questions cost ~1 generation; unsure ones still pay for paths. `N_PATHS`
+  is the dial.
 - **Not strictly dominant.** 2 tasks got worse. Adding paths can still lose.
 - **The scaffold is a reconstruction.** The original evaluation script was not
   preserved anywhere on this machine. The dataset, the recorded rows, the
