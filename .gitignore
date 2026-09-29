@@ -13,3 +13,4 @@ build/
 runs/*
 !runs/he_bonsai_full.jsonl
 !runs/he_merge_full.jsonl
+!runs/he_merge_v12.jsonl
