@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "heuristic-1"
-version = "0.1.0"
+version = "1.2.0"
 description = "Bonsai 27B as thinker with a decider judge, served as one OpenAI-compatible model"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,6 +20,10 @@ dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 heuristic-1 = "heuristic1.server:main"
+
+[tool.hatch.metadata]
+# the metacog dep is a git pin (a direct reference), not a PyPI name
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["heuristic1"]

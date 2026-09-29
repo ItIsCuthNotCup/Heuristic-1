@@ -43,21 +43,26 @@ def clean_answer(text: str) -> str:
 def build_mc(**overrides: Any) -> MetaCog:
     """Assemble the merge.
 
-    Defaults mirror the configuration the recorded HumanEval results were
-    produced with: best-of-N over 8 paths, a greedy anchor in the pool, and a
-    cascade that skips sampling when the greedy path already scores >= 0.95.
+    Defaults: best-of-N over 8 paths, a greedy anchor in the pool, and a cascade
+    that skips sampling when the greedy path already scores >= CASCADE_CONFIDENCE
+    (default 0.8; the recorded HumanEval rows used 0.95).
 
-    Environment overrides: THINKER_URL, THINKER_MODEL, JUDGE_URL, N_PATHS,
-    NO_CASCADE, MAX_TOKENS, TEMPERATURE.
+    Environment overrides: THINKER_URL, THINKER_MODEL, JUDGE_URL, MODE, N_PATHS,
+    NO_CASCADE, CASCADE_CONFIDENCE, MAX_TOKENS, TEMPERATURE, RACE_CONFIDENCE,
+    RACE_SCORE_CHARS.
     """
     cfg = dict(
-        mode="best_of_n",
+        mode=env("MODE", "best_of_n"),
         strategy="noul",
         n_paths=int(env("N_PATHS", "8")),
         greedy_anchor=True,
-        cascade_confidence=None if env("NO_CASCADE", "") == "1" else 0.95,
+        cascade_confidence=None
+        if env("NO_CASCADE", "") == "1"
+        else float(env("CASCADE_CONFIDENCE", "0.8")),
         max_tokens=int(env("MAX_TOKENS", "2048")),
         temperature=float(env("TEMPERATURE", "0.8")),
+        race_confidence=float(env("RACE_CONFIDENCE", "0.8")),
+        race_score_chars=int(env("RACE_SCORE_CHARS", "600")),
     )
     cfg.update(overrides)
     thinker = OpenAICompatThinker(
