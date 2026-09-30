@@ -6,11 +6,11 @@ heuristic-1 runs a small local judge model over the reasoning a 27B model
 produces, and returns the judge's pick. To the caller it is a single model on a
 single endpoint. Underneath it is two GPU processes and an orchestration loop.
 
-On HumanEval it scores **80.5 % against bonsai alone's 68.3 %** on the same 164
-tasks, fixing 22 and breaking 2 (exact McNemar p = 0.000036). Since v1.2 the
-cost profile changed: confident questions now cost ~1 generation, not ~8 —
-measured **~8× faster and ~8× fewer tokens** on easy queries (see the cost
-table below).
+On HumanEval it scores **87.2 % against bonsai alone's 68.3 %** on the same 164
+tasks (v1.2, paired run). v1.3 attacks the hard tail: on a 46-task subset of
+every task v1.2 branched on or failed, it scored **92 % vs 61 %** on answered
+tasks — 12 fixed, 0 lost — at **60 % fewer tokens**. Confident questions cost
+~1 generation; effort routing trims that generation further (see Results).
 
 ## What it is
 
@@ -40,22 +40,42 @@ HumanEval, 164 tasks, paired — same items, same prompt, same endpoints. The
 oracle is the task's own unit test, executed in a subprocess with a CPU,
 address-space and filesize cap.
 
-| | bonsai alone | heuristic-1 |
-|---|---|---|
-| passed | 112/164 = 68.3 % | **132/164 = 80.5 %** |
-| answer completed | 110/164 | 135/164 |
-| thinker tokens (mean) | 708 | 5 564 |
-| thinker generations (mean) | 1.00 | 1.98 |
-| judge calls (mean) | 0 | 8.53 |
+| | bonsai alone | v1.0 | v1.2 |
+|---|---|---|---|
+| passed | 112/164 = 68.3 % | 132/164 = 80.5 % | **143/164 = 87.2 %** |
+| answer completed | 110/164 | 135/164 | 152/164 |
+| thinker tokens (mean) | 708 | 5 564 | **1 744** |
+| thinker generations (mean) | 1.00 | 1.98 | 1.01 |
+| judge calls (mean) | 0 | 8.53 | 1.61 |
 
-**Fixed 22 / lost 2, exact McNemar p = 0.000036.**
+v1.0 vs bonsai: fixed 22 / lost 2 (McNemar p = 0.000036). v1.2 vs v1.0:
+**fixed 14 / lost 3** (p = 0.013) — and vs bonsai it fixed 31, lost 0.
 
-Read the token column before celebrating: the +12.2 points costs 7.9× the
-generation budget. `usage.completion_tokens` counts the thinker only — the
-judge's ~8.5 forward passes are not tokenised and do not appear there.
+The 0.8 cascade is what drops v1.2's judge calls to 1.61 and generations to
+1.01: 150/164 questions shipped the greedy answer after one judge score.
+`usage.completion_tokens` counts the thinker only — the judge's forward passes
+are not tokenised and do not appear there.
 
-`runs/he_bonsai_full.jsonl` and `runs/he_merge_full.jsonl` are the raw recorded
-rows, committed so the numbers above can be checked rather than trusted.
+### v1.3 subset (measured, not projected)
+
+46-task hard subset — every task v1.2 branched on, every v1.2 failure, plus 12
+easy controls — paired against the recorded v1.2 rows:
+
+| | v1.2 | v1.3 |
+|---|---:|---:|
+| pass on answered | 23/38 = 61 % | **35/38 = 92 %** |
+| thinker tokens (mean) | 4 066 | **1 630 (−60 %)** |
+| fixed / lost | — | **12 / 0** |
+
+8 subset tasks still return reasoning with no answer — the all-think-winner
+mode — even after `ANSWER_RESCUE`; only 2 of those were v1.2 passes
+(HumanEval/160, /91), the only regressions. Extrapolated to all 164 (the
+subset holds every v1.2 failure and branched task), v1.3 projects to
+**~90-93 %** — projected, not measured: no full v1.3 run yet.
+
+`runs/he_bonsai_full.jsonl`, `runs/he_merge_full.jsonl` and
+`runs/subset_v13*.jsonl` are the raw recorded rows, committed so the numbers
+above can be checked rather than trusted.
 
 ## What v1.2 actually costs
 
@@ -195,7 +215,12 @@ replies) each move the totals, and none reproduces the originals.
   (cascade 0.95, which almost never fired). With the v1.2 0.8 cascade, easy
   questions cost ~1 generation; unsure ones still pay for paths. `N_PATHS`
   is the dial.
-- **Not strictly dominant.** 2 tasks got worse. Adding paths can still lose.
+- **v1.3's numbers are a hard-slice measurement.** The 46-task subset is
+  deliberately biased toward tasks v1.2 struggled with; the ~90-93 %
+  full-eval figure is a projection, not a run. Within the subset, 2 tasks it
+  still can't answer were v1.2 passes.
+- **Not strictly dominant.** v1.0 lost 2 tasks vs bonsai; v1.2 lost 3 vs
+  v1.0; v1.3 lost 2 vs v1.2 on the subset. Adding paths can still lose.
 - **The scaffold is a reconstruction.** The original evaluation script was not
   preserved anywhere on this machine. The dataset, the recorded rows, the
   prompt wording and the output schema were recovered, and the harness
