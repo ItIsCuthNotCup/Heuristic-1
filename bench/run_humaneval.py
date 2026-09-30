@@ -142,14 +142,18 @@ def run_tests(program: str, item: dict, timeout: int = DEFAULT_TIMEOUT) -> tuple
 
 # ------------------------------------------------------------------ client ---
 
-def chat(url: str, model: str, prompt: str, *, temperature: float, max_tokens: int) -> dict:
+def chat(url: str, model: str, prompt: str, *, temperature: float, max_tokens: int,
+         api_key: str = "") -> dict:
     body = json.dumps({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
         "max_tokens": max_tokens,
     }).encode()
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json", "User-Agent": "heuristic1-bench/1.0"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = urllib.request.Request(url, data=body, headers=headers)
     with urllib.request.urlopen(req, timeout=int(os.environ.get("BENCH_TIMEOUT", "3600"))) as r:
         return json.load(r)
 
@@ -162,8 +166,9 @@ def run_one(url: str, model: str, item: dict, arm: str, max_tokens: int) -> dict
     t0 = time.time()
     try:
         resp = chat(url, model, build_prompt(item),
-                    temperature=0.0 if arm == "bonsai" else 0.8,
-                    max_tokens=max_tokens)
+                    temperature=0.0 if arm in ("bonsai", "raw") else 0.8,
+                    max_tokens=max_tokens,
+                    api_key=os.environ.get("RAW_API_KEY", "") if arm == "raw" else "")
     except Exception as e:  # noqa: BLE001 - a dead row is data, not a crash
         return {"arm": arm, "task_id": item["task_id"], "passed": False,
                 "answer": "", "finished": False,
@@ -223,6 +228,9 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 ARMS = {
     "bonsai": ("http://localhost:8010/v1/chat/completions", "bonsai"),
     "merge": ("http://localhost:8200/v1/chat/completions", "heuristic-1"),
+    # any hosted OpenAI-compatible model alone, e.g. to pair against a merge
+    # server whose THINKER_URL points at the same model
+    "raw": (os.environ.get("RAW_URL", ""), os.environ.get("RAW_MODEL", "")),
 }
 
 
@@ -283,8 +291,9 @@ def report(out: Path, items: list[dict], arms: list[str]) -> None:
               f"{f'[{100*lo:.1f}, {100*hi:.1f}]':>17}"
               f"{sum(toks) / n:>10.0f}{sum(secs) / n:>10.1f}")
 
-    if "bonsai" in data and "merge" in data:
-        b, m = data["bonsai"], data["merge"]
+    base = "raw" if "raw" in data else "bonsai"
+    if base in data and "merge" in data:
+        b, m = data[base], data["merge"]
         shared = sorted(set(b) & set(m))
         fixed = sum(1 for i in shared if m[i].get("passed") and not b[i].get("passed"))
         lost = sum(1 for i in shared if b[i].get("passed") and not m[i].get("passed"))

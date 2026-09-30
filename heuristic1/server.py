@@ -196,6 +196,7 @@ def build_mc(
     thinker = OpenAICompatThinker(
         env("THINKER_URL", "http://localhost:8010"),
         model=env("THINKER_MODEL", "bonsai"),
+        api_key=env("THINKER_API_KEY", "") or None,
         extra_body={"reasoning_effort": effort} if effort else None,
         system_prompt=(env("SYSTEM_PROMPT", "") or (ANSWER_FIRST_SYSTEM if answer_first else ""))
         or None,
