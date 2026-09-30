@@ -77,6 +77,28 @@ subset holds every v1.2 failure and branched task), v1.3 projects to
 `runs/subset_v13*.jsonl` are the raw recorded rows, committed so the numbers
 above can be checked rather than trusted.
 
+### v1.4 subset (measured)
+
+Same 46-task subset, v1.4 config (`BRANCH_RACE=on BRANCH_MAX_TOKENS=4096`,
+prefer-answerable winners — everything else unchanged):
+
+| | v1.3 | v1.4 |
+|---|---:|---:|
+| pass | 35/46 = 76 % | **38/46 = 83 %** |
+| fixed / lost vs v1.3 | — | **3 / 0** |
+| median branched-task wall-clock | dead at cap | **~300-700 s** |
+
+v1.3's three dead-but-winnable tasks (HumanEval/91, /99, /160) now pass —
+each across multiple runs. Every apparent regression (e.g. /130, /134)
+recovered when rerun serially: the failures were GPU slot contention
+(3 workers × 8 paths vs 8 slots), not the pipeline. Adaptive path width
+(`BRANCH_MIN_PATHS`) measured worse and is not recommended. `SELF_REPAIR`
+fired zero successful repairs — HumanEval failures are wrong answers, not
+syntax errors; kept as an opt-in knob.
+
+`runs/subset_v14*.jsonl` are the raw rows, committed: `_full` is the
+loaded run, `_serial` the contention-free rerun of every flipped task.
+
 ## What v1.2 actually costs
 
 Live measurements on the production setup (bonsai on a DGX Spark, decider on
@@ -155,6 +177,30 @@ v1.3 knobs (all opt-in, off by default):
 - `GATE_LOG=/path.jsonl` — appends one telemetry row per request (gate score,
   branch decision, tokens, calls, effort, triage score, rescue use) so the
   cascade threshold can be fitted from data instead of guessed.
+
+v1.4 knobs (all opt-in, off by default; require MetaCog ≥ the `v0.4` branch):
+
+- **Prefer-answerable winners** (in MetaCog itself, always on there): a path
+  that is pure `<think>` reasoning can no longer win the pool or
+  short-circuit the cascade when a sibling actually answered.
+- `BRANCH_RACE=on` — after the cascade fails, the sampled paths stream
+  concurrently race-style: the judge re-scores partial text and losers are
+  cancelled when one crosses `RACE_CONFIDENCE` (early exit → ~300-500s wins
+  on hard tasks). When no stream wins within `RACE_MAX_SECONDS` (default
+  600), polling stops but unfinished streams complete naturally — the
+  deadline bounds winner-polling, not generation. The pool is still judged
+  normally. Requires bonsai `--parallel N`.
+- `BRANCH_MAX_TOKENS=4096` — branched (proven-hard) paths may think past
+  `MAX_TOKENS`; the recorded all-think failures all truncate exactly at the
+  cap. Pair with `BRANCH_RACE`: the doubled budget doubles generation time
+  on tasks whose paths can't finish early, and the race's early exit is
+  what offsets it.
+- `SELF_REPAIR=on` — when the winner's fenced Python doesn't parse, feed the
+  error back for one low-effort fix (`REPAIR_MAX_TOKENS`, default 1024).
+  Only fires on already-answered, already-broken output.
+- `BRANCH_MIN_PATHS` — adaptive width (the more the judge doubted the greedy
+  answer, the wider the search). Measured worse in the v1.4 subset eval —
+  shrunk pools starved diversity on hard tasks. Not recommended.
 
 ## Making it faster
 

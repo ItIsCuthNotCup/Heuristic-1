@@ -41,10 +41,13 @@ __all__ = [
     "MODEL_ID",
     "ANSWER_FIRST_SYSTEM",
     "RESCUE_SUFFIX",
+    "REPAIR_SUFFIX",
     "build_mc",
     "clean_answer",
+    "code_block",
     "effort_for",
     "gate_log",
+    "repair_answer",
     "rescue_answer",
     "serve",
     "main",
@@ -93,6 +96,62 @@ def rescue_answer(thinker: Any, problem: str, winner_text: str) -> tuple[str, in
     return gens[0].text, gens[0].tokens
 
 
+_CODE_FENCE_RE = re.compile(r"```(\w*)\s*\n(.*?)```", re.S)
+
+
+def code_block(text: str) -> tuple[str, str] | None:
+    """First fenced code block as (language, body); None when absent."""
+    m = _CODE_FENCE_RE.search(text)
+    return (m.group(1).lower(), m.group(2)) if m else None
+
+
+REPAIR_SUFFIX = (
+    "\n\nThis code has a syntax error:\n```python\n{code}\n```\n"
+    "Error: {error}\n\n"
+    "Output only the corrected code in a single code block — no explanation."
+)
+
+
+def repair_answer(thinker: Any, problem: str, answer_text: str) -> tuple[str, int]:
+    """One low-effort fix when the winner's fenced Python does not parse.
+
+    Returns (repaired answer text, tokens used); ("", 0) when there is no
+    broken Python block, the repair call fails, or the fix still does not
+    parse. Only fires on answers that already contain a code block — an
+    empty answer is the rescue path's job, not this one's.
+    """
+    block = code_block(answer_text)
+    if block is None or block[0] not in ("", "python", "py"):
+        return "", 0
+    try:
+        compile(block[1], "<answer>", "exec")
+        return "", 0
+    except SyntaxError as e:
+        error = str(e)
+    try:
+        gens = thinker.generate(
+            problem + REPAIR_SUFFIX.format(code=block[1][-1500:], error=error),
+            "",
+            n=1,
+            max_tokens=int(env("REPAIR_MAX_TOKENS", "1024")),
+            temperature=0.2,
+        )
+    except Exception as e:  # noqa: BLE001 - repair is best-effort
+        print(f"repair failed: {e}", flush=True)
+        return "", 0
+    if not gens:
+        return "", 0
+    fixed = clean_answer(gens[0].text)
+    new_block = code_block(fixed)
+    if new_block is None:
+        return "", gens[0].tokens
+    try:
+        compile(new_block[1], "<repaired>", "exec")
+    except SyntaxError:
+        return "", gens[0].tokens
+    return fixed, gens[0].tokens
+
+
 def build_mc(
     *,
     effort: str | None = None,
@@ -112,7 +171,8 @@ def build_mc(
 
     Environment overrides: THINKER_URL, THINKER_MODEL, JUDGE_URL, MODE, N_PATHS,
     NO_CASCADE, CASCADE_CONFIDENCE, MAX_TOKENS, TEMPERATURE, RACE_CONFIDENCE,
-    RACE_SCORE_CHARS, SYSTEM_PROMPT.
+    RACE_SCORE_CHARS, RACE_MAX_SECONDS, SYSTEM_PROMPT, BRANCH_RACE,
+    BRANCH_MIN_PATHS, BRANCH_MAX_TOKENS.
     """
     cfg = dict(
         mode=env("MODE", "best_of_n"),
@@ -126,15 +186,18 @@ def build_mc(
         temperature=float(env("TEMPERATURE", "0.8")),
         race_confidence=float(env("RACE_CONFIDENCE", "0.8")),
         race_score_chars=int(env("RACE_SCORE_CHARS", "600")),
+        # branch-path upgrades (MetaCog v0.4): only paid when the cascade fails
+        race_on_branch=env("BRANCH_RACE", "") == "on",
+        race_max_seconds=float(env("RACE_MAX_SECONDS", "600")),
+        branch_min_paths=int(v) if (v := env("BRANCH_MIN_PATHS", "")) else None,
+        branch_max_tokens=int(v) if (v := env("BRANCH_MAX_TOKENS", "")) else None,
     )
     cfg.update(overrides)
     thinker = OpenAICompatThinker(
         env("THINKER_URL", "http://localhost:8010"),
         model=env("THINKER_MODEL", "bonsai"),
         extra_body={"reasoning_effort": effort} if effort else None,
-        system_prompt=(
-            env("SYSTEM_PROMPT", "") or (ANSWER_FIRST_SYSTEM if answer_first else "")
-        )
+        system_prompt=(env("SYSTEM_PROMPT", "") or (ANSWER_FIRST_SYSTEM if answer_first else ""))
         or None,
     )
     judge = SystemOneJudge(base_url=env("JUDGE_URL", "http://localhost:8008"))
@@ -194,6 +257,7 @@ def serve(
     effort_routing: bool | None = None,
     answer_first: bool | None = None,
     answer_rescue: bool | None = None,
+    self_repair: bool | None = None,
     gate_log_path: str | None = None,
 ) -> None:
     """Run the OpenAI-compatible server until interrupted.
@@ -203,8 +267,9 @@ def serve(
     ``reasoning_effort``. ``answer_first`` (env ANSWER_FIRST=on) serves the
     answer-first system prompt. ``answer_rescue`` (env ANSWER_RESCUE=on)
     fires a single low-effort continuation when the winning path is pure
-    reasoning with no answer. ``gate_log_path`` (env GATE_LOG) appends a
-    JSONL telemetry row per request.
+    reasoning with no answer. ``self_repair`` (env SELF_REPAIR=on) feeds a
+    syntax-broken fenced code block back for one fix. ``gate_log_path``
+    (env GATE_LOG) appends a JSONL telemetry row per request.
     """
     if effort_routing is None:
         effort_routing = env("EFFORT_ROUTING", "") == "on"
@@ -212,6 +277,8 @@ def serve(
         answer_first = env("ANSWER_FIRST", "") == "on"
     if answer_rescue is None:
         answer_rescue = env("ANSWER_RESCUE", "") == "on"
+    if self_repair is None:
+        self_repair = env("SELF_REPAIR", "") == "on"
     if gate_log_path is None:
         gate_log_path = env("GATE_LOG", "") or None
 
@@ -272,13 +339,19 @@ def serve(
             rescue_tokens = 0
             if answer_rescue and not answer_text:
                 rescue_thinker = build_mc(effort="low").thinker
-                rescued_text, rescue_tokens = rescue_answer(
-                    rescue_thinker, problem, result.answer
-                )
+                rescued_text, rescue_tokens = rescue_answer(rescue_thinker, problem, result.answer)
                 rescued_text = clean_answer(rescued_text)
                 if rescued_text:
                     answer_text = rescued_text
                     rescued = True
+            repaired = False
+            repair_tokens = 0
+            if self_repair and answer_text:
+                repair_thinker = build_mc(effort="low").thinker
+                repaired_text, repair_tokens = repair_answer(repair_thinker, problem, answer_text)
+                if repaired_text:
+                    answer_text = repaired_text
+                    repaired = True
             dt = time.time() - t0
 
             rounds = result.trace.rounds
@@ -303,6 +376,8 @@ def serve(
                         "triage": triage,
                         "rescued": rescued,
                         "rescue_tokens": rescue_tokens,
+                        "repaired": repaired,
+                        "repair_tokens": repair_tokens,
                     },
                 )
             self._send(
@@ -341,6 +416,8 @@ def serve(
                         "triage": triage,
                         "rescued": rescued,
                         "rescue_tokens": rescue_tokens,
+                        "repaired": repaired,
+                        "repair_tokens": repair_tokens,
                     },
                 },
             )
@@ -357,6 +434,7 @@ def main() -> None:
         effort_routing=env("EFFORT_ROUTING", "") == "on",
         answer_first=answer_first,
         answer_rescue=env("ANSWER_RESCUE", "") == "on",
+        self_repair=env("SELF_REPAIR", "") == "on",
         gate_log_path=env("GATE_LOG", "") or None,
     )
 
