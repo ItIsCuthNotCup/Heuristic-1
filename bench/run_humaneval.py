@@ -150,7 +150,7 @@ def chat(url: str, model: str, prompt: str, *, temperature: float, max_tokens: i
         "max_tokens": max_tokens,
     }).encode()
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=900) as r:
+    with urllib.request.urlopen(req, timeout=int(os.environ.get("BENCH_TIMEOUT", "3600"))) as r:
         return json.load(r)
 
 
@@ -158,12 +158,12 @@ def build_prompt(item: dict) -> str:
     return f"{INSTRUCTION}\n\n{item['prompt']}"
 
 
-def run_one(url: str, model: str, item: dict, arm: str) -> dict:
+def run_one(url: str, model: str, item: dict, arm: str, max_tokens: int) -> dict:
     t0 = time.time()
     try:
         resp = chat(url, model, build_prompt(item),
                     temperature=0.0 if arm == "bonsai" else 0.8,
-                    max_tokens=2048)
+                    max_tokens=max_tokens)
     except Exception as e:  # noqa: BLE001 - a dead row is data, not a crash
         return {"arm": arm, "task_id": item["task_id"], "passed": False,
                 "answer": "", "finished": False,
@@ -233,6 +233,8 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0, help="0 = all 164")
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--out", default="runs")
+    ap.add_argument("--max-tokens", type=int, default=2048,
+                    help="output cap per request; use the same value for every arm")
     args = ap.parse_args()
 
     items = json.load(open(DATA))
@@ -247,7 +249,7 @@ def main() -> None:
         t0 = time.time()
         print(f"[{arm}] {len(items)} tasks -> {path}", flush=True)
         with path.open("w") as fh, ThreadPoolExecutor(max_workers=args.workers) as pool:
-            futs = [pool.submit(run_one, url, model, it, arm) for it in items]
+            futs = [pool.submit(run_one, url, model, it, arm, args.max_tokens) for it in items]
             for i, f in enumerate(futs, 1):
                 rec = f.result()
                 fh.write(json.dumps(rec) + "\n")
