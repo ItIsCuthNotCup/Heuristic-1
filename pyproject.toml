@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "heuristic-1"
-version = "1.2.0"
+version = "1.3.0"
 description = "Bonsai 27B as thinker with a decider judge, served as one OpenAI-compatible model"
 readme = "README.md"
 requires-python = ">=3.10"
