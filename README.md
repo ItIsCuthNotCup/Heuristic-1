@@ -77,6 +77,28 @@ subset holds every v1.2 failure and branched task), v1.3 projects to
 `runs/subset_v13*.jsonl` are the raw recorded rows, committed so the numbers
 above can be checked rather than trusted.
 
+### v1.4 subset (measured)
+
+Same 46-task subset, v1.4 config (`BRANCH_RACE=on BRANCH_MAX_TOKENS=4096`,
+prefer-answerable winners — everything else unchanged):
+
+| | v1.3 | v1.4 |
+|---|---:|---:|
+| pass | 35/46 = 76 % | **38/46 = 83 %** |
+| fixed / lost vs v1.3 | — | **3 / 0** |
+| median branched-task wall-clock | dead at cap | **~300-700 s** |
+
+v1.3's three dead-but-winnable tasks (HumanEval/91, /99, /160) now pass —
+each across multiple runs. Every apparent regression (e.g. /130, /134)
+recovered when rerun serially: the failures were GPU slot contention
+(3 workers × 8 paths vs 8 slots), not the pipeline. Adaptive path width
+(`BRANCH_MIN_PATHS`) measured worse and is not recommended. `SELF_REPAIR`
+fired zero successful repairs — HumanEval failures are wrong answers, not
+syntax errors; kept as an opt-in knob.
+
+`runs/subset_v14*.jsonl` are the raw rows, committed: `_full` is the
+loaded run, `_serial` the contention-free rerun of every flipped task.
+
 ## What v1.2 actually costs
 
 Live measurements on the production setup (bonsai on a DGX Spark, decider on
