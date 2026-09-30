@@ -171,8 +171,8 @@ def build_mc(
 
     Environment overrides: THINKER_URL, THINKER_MODEL, JUDGE_URL, MODE, N_PATHS,
     NO_CASCADE, CASCADE_CONFIDENCE, MAX_TOKENS, TEMPERATURE, RACE_CONFIDENCE,
-    RACE_SCORE_CHARS, SYSTEM_PROMPT, BRANCH_RACE, BRANCH_MIN_PATHS,
-    BRANCH_MAX_TOKENS.
+    RACE_SCORE_CHARS, RACE_MAX_SECONDS, SYSTEM_PROMPT, BRANCH_RACE,
+    BRANCH_MIN_PATHS, BRANCH_MAX_TOKENS.
     """
     cfg = dict(
         mode=env("MODE", "best_of_n"),
@@ -188,6 +188,7 @@ def build_mc(
         race_score_chars=int(env("RACE_SCORE_CHARS", "600")),
         # branch-path upgrades (MetaCog v0.4): only paid when the cascade fails
         race_on_branch=env("BRANCH_RACE", "") == "on",
+        race_max_seconds=float(env("RACE_MAX_SECONDS", "600")),
         branch_min_paths=int(v) if (v := env("BRANCH_MIN_PATHS", "")) else None,
         branch_max_tokens=int(v) if (v := env("BRANCH_MAX_TOKENS", "")) else None,
     )

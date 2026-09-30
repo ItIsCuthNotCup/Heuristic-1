@@ -163,18 +163,22 @@ v1.4 knobs (all opt-in, off by default; require MetaCog ≥ the `v0.4` branch):
   short-circuit the cascade when a sibling actually answered.
 - `BRANCH_RACE=on` — after the cascade fails, the sampled paths stream
   concurrently race-style: the judge re-scores partial text and losers are
-  cancelled when one crosses `RACE_CONFIDENCE`. The pool is still judged
-  normally; only generation gets faster and cheaper. Requires bonsai
-  `--parallel N`. On tasks where *no* path can reach the bar it instead
-  burns until `race_max_seconds` — more tokens than best-of-n there.
-- `BRANCH_MIN_PATHS=2` — adaptive width: the more the judge doubted the
-  greedy answer, the wider the search (`min + u·(n-1-min)` at uncertainty u).
+  cancelled when one crosses `RACE_CONFIDENCE` (early exit → ~300-500s wins
+  on hard tasks). When no stream wins within `RACE_MAX_SECONDS` (default
+  600), polling stops but unfinished streams complete naturally — the
+  deadline bounds winner-polling, not generation. The pool is still judged
+  normally. Requires bonsai `--parallel N`.
 - `BRANCH_MAX_TOKENS=4096` — branched (proven-hard) paths may think past
   `MAX_TOKENS`; the recorded all-think failures all truncate exactly at the
-  cap.
+  cap. Pair with `BRANCH_RACE`: the doubled budget doubles generation time
+  on tasks whose paths can't finish early, and the race's early exit is
+  what offsets it.
 - `SELF_REPAIR=on` — when the winner's fenced Python doesn't parse, feed the
   error back for one low-effort fix (`REPAIR_MAX_TOKENS`, default 1024).
   Only fires on already-answered, already-broken output.
+- `BRANCH_MIN_PATHS` — adaptive width (the more the judge doubted the greedy
+  answer, the wider the search). Measured worse in the v1.4 subset eval —
+  shrunk pools starved diversity on hard tasks. Not recommended.
 
 ## Making it faster
 
