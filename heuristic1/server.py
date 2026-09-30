@@ -16,19 +16,39 @@ are not redistributed here — Bonsai 2 27B (Prism ML) as the thinker, decider-4
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from metacog import Config, MetaCog, OpenAICompatThinker, SystemOneJudge
+from metacog.judge import TRIAGE_INSTRUCTIONS
 
 MODEL_ID = "heuristic-1"
 
-__all__ = ["MODEL_ID", "build_mc", "clean_answer", "serve", "main"]
+ANSWER_FIRST_SYSTEM = (
+    "Answer first, explain after: lead with the final answer or complete code, "
+    "then add any reasoning or notes below it. Never let explanation push the "
+    "answer past the token limit."
+)
+
+__all__ = [
+    "MODEL_ID",
+    "ANSWER_FIRST_SYSTEM",
+    "RESCUE_SUFFIX",
+    "build_mc",
+    "clean_answer",
+    "effort_for",
+    "gate_log",
+    "rescue_answer",
+    "serve",
+    "main",
+]
 
 
 def env(name: str, default: str) -> str:
@@ -37,19 +57,62 @@ def env(name: str, default: str) -> str:
 
 def clean_answer(text: str) -> str:
     """Strip <think>...</think> reasoning blocks the thinker may leak."""
-    return re.sub(r"<think>.*?</think>\s*", "", text, flags=re.S).strip()
+    out = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.S)
+    # An unclosed trailing think block means the stream was cut mid-reasoning:
+    # everything after the tag is think text, not an answer.
+    return re.sub(r"<think>.*", "", out, flags=re.S).strip()
 
 
-def build_mc(**overrides: Any) -> MetaCog:
+RESCUE_SUFFIX = (
+    "\n\nYour analysis so far:\n{tail}\n\n"
+    "Now output only the final answer or complete code in a single code "
+    "block — no explanation."
+)
+
+
+def rescue_answer(thinker: Any, problem: str, winner_text: str) -> tuple[str, int]:
+    """One low-effort continuation when the merge's winner is pure reasoning.
+
+    Feeds the tail of the winning path's reasoning back and asks for the
+    answer alone. Returns (answer text, tokens used); ("", 0) on failure.
+    """
+    tail = re.sub(r"</?think>", "", winner_text)[-1500:]
+    try:
+        gens = thinker.generate(
+            problem + RESCUE_SUFFIX.format(tail=tail),
+            "",
+            n=1,
+            max_tokens=int(env("RESCUE_MAX_TOKENS", "1024")),
+            temperature=0.2,
+        )
+    except Exception as e:  # noqa: BLE001 - rescue is best-effort
+        print(f"rescue failed: {e}", flush=True)
+        return "", 0
+    if not gens:
+        return "", 0
+    return gens[0].text, gens[0].tokens
+
+
+def build_mc(
+    *,
+    effort: str | None = None,
+    answer_first: bool = False,
+    **overrides: Any,
+) -> MetaCog:
     """Assemble the merge.
 
     Defaults: best-of-N over 8 paths, a greedy anchor in the pool, and a cascade
     that skips sampling when the greedy path already scores >= CASCADE_CONFIDENCE
     (default 0.8; the recorded HumanEval rows used 0.95).
 
+    ``effort`` sets the thinker's ``reasoning_effort`` chat-template field
+    (xhigh/medium/low on bonsai); ``answer_first`` prepends a system prompt that
+    puts the final answer or complete code before any explanation so a
+    token-truncated reply still yields an answer.
+
     Environment overrides: THINKER_URL, THINKER_MODEL, JUDGE_URL, MODE, N_PATHS,
     NO_CASCADE, CASCADE_CONFIDENCE, MAX_TOKENS, TEMPERATURE, RACE_CONFIDENCE,
-    RACE_SCORE_CHARS.
+    RACE_SCORE_CHARS, SYSTEM_PROMPT.
     """
     cfg = dict(
         mode=env("MODE", "best_of_n"),
@@ -68,9 +131,47 @@ def build_mc(**overrides: Any) -> MetaCog:
     thinker = OpenAICompatThinker(
         env("THINKER_URL", "http://localhost:8010"),
         model=env("THINKER_MODEL", "bonsai"),
+        extra_body={"reasoning_effort": effort} if effort else None,
+        system_prompt=(
+            env("SYSTEM_PROMPT", "") or (ANSWER_FIRST_SYSTEM if answer_first else "")
+        )
+        or None,
     )
     judge = SystemOneJudge(base_url=env("JUDGE_URL", "http://localhost:8008"))
     return MetaCog(thinker, judge, Config(**cfg))
+
+
+def effort_for(judge: SystemOneJudge, problem: str) -> tuple[str, float]:
+    """Pre-generation difficulty triage: judge the problem with an empty path
+    and map P(easy) onto a chat-template ``reasoning_effort``.
+
+    Effort is only *lowered* from the xhigh default when the judge is confident
+    the problem is easy — a blind medium-effort pass measured worse on hard
+    problems, so ambiguous scores stay at xhigh.
+    """
+    tv = judge.score(problem, [""], instructions=TRIAGE_INSTRUCTIONS)
+    p_easy = (tv.raw or tv.probabilities)[0]
+    low_min = float(env("EFFORT_LOW_MIN", "0.9"))
+    med_min = float(env("EFFORT_MED_MIN", "0.7"))
+    effort = "low" if p_easy >= low_min else "medium" if p_easy >= med_min else "xhigh"
+    return effort, p_easy
+
+
+_LOG_LOCK = threading.Lock()
+
+
+def gate_log(path: str, row: dict) -> None:
+    """Append one JSONL telemetry row (gate score + per-request stats).
+
+    Joined with task outcomes on the bench side, these rows let us fit the
+    cascade threshold that maximises accuracy per token instead of the
+    guessed 0.8. Never raises: telemetry must not break serving."""
+    try:
+        with _LOG_LOCK:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row) + "\n")
+    except OSError as e:
+        print(f"gate_log write failed: {e}", flush=True)
 
 
 def problem_from(messages: list[dict]) -> str:
@@ -86,8 +187,33 @@ def problem_from(messages: list[dict]) -> str:
     return "\n".join(f"{m.get('role')}: {m.get('content')}" for m in messages)
 
 
-def serve(mc: MetaCog, port: int) -> None:
-    """Run the OpenAI-compatible server until interrupted."""
+def serve(
+    mc: MetaCog,
+    port: int,
+    *,
+    effort_routing: bool | None = None,
+    answer_first: bool | None = None,
+    answer_rescue: bool | None = None,
+    gate_log_path: str | None = None,
+) -> None:
+    """Run the OpenAI-compatible server until interrupted.
+
+    ``effort_routing`` (env EFFORT_ROUTING=on) adds a cheap pre-generation
+    judge triage and rebuilds the merge per request with the routed
+    ``reasoning_effort``. ``answer_first`` (env ANSWER_FIRST=on) serves the
+    answer-first system prompt. ``answer_rescue`` (env ANSWER_RESCUE=on)
+    fires a single low-effort continuation when the winning path is pure
+    reasoning with no answer. ``gate_log_path`` (env GATE_LOG) appends a
+    JSONL telemetry row per request.
+    """
+    if effort_routing is None:
+        effort_routing = env("EFFORT_ROUTING", "") == "on"
+    if answer_first is None:
+        answer_first = env("ANSWER_FIRST", "") == "on"
+    if answer_rescue is None:
+        answer_rescue = env("ANSWER_RESCUE", "") == "on"
+    if gate_log_path is None:
+        gate_log_path = env("GATE_LOG", "") or None
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "heuristic1/1.0"
@@ -123,16 +249,62 @@ def serve(mc: MetaCog, port: int) -> None:
             if not messages:
                 return self._send(400, {"error": "messages required"})
 
+            problem = problem_from(messages)
+            effort: str | None = None
+            triage: float | None = None
+            use_mc = mc
+            if effort_routing or answer_first:
+                if effort_routing:
+                    try:
+                        effort, triage = effort_for(mc.judge, problem)
+                    except Exception as e:  # noqa: BLE001 - triage is best-effort
+                        print(f"triage failed, using xhigh: {e}", flush=True)
+                        effort = "xhigh"
+                use_mc = build_mc(effort=effort, answer_first=answer_first)
+
             t0 = time.time()
             try:
-                result = mc.run(problem_from(messages))
+                result = use_mc.run(problem)
             except Exception as e:  # noqa: BLE001
                 return self._send(502, {"error": f"pipeline failed: {e}"})
+            answer_text = clean_answer(result.answer)
+            rescued = False
+            rescue_tokens = 0
+            if answer_rescue and not answer_text:
+                rescue_thinker = build_mc(effort="low").thinker
+                rescued_text, rescue_tokens = rescue_answer(
+                    rescue_thinker, problem, result.answer
+                )
+                rescued_text = clean_answer(rescued_text)
+                if rescued_text:
+                    answer_text = rescued_text
+                    rescued = True
             dt = time.time() - t0
 
             rounds = result.trace.rounds
             conf = float(rounds[-1].verdict.confidence) if rounds else 0.0
             print(f"[{time.strftime('%H:%M:%S')}] conf={conf:.2f} {dt:.1f}s", flush=True)
+            if gate_log_path:
+                gate_log(
+                    gate_log_path,
+                    {
+                        "ts": int(t0),
+                        "problem_sha": hashlib.sha1(problem.encode()).hexdigest()[:12],
+                        "conf": round(conf, 4),
+                        "finished": result.finished,
+                        "branched": result.trace.thinker_calls > 1,
+                        "seconds": round(dt, 2),
+                        "thinker_calls": result.trace.thinker_calls,
+                        "judge_calls": result.trace.judge_calls,
+                        "thinker_tokens": result.trace.thinker_tokens,
+                        "rounds": len(rounds),
+                        "mode": use_mc.config.mode,
+                        "effort": effort,
+                        "triage": triage,
+                        "rescued": rescued,
+                        "rescue_tokens": rescue_tokens,
+                    },
+                )
             self._send(
                 200,
                 {
@@ -145,7 +317,7 @@ def serve(mc: MetaCog, port: int) -> None:
                             "index": 0,
                             "message": {
                                 "role": "assistant",
-                                "content": clean_answer(result.answer),
+                                "content": answer_text,
                             },
                             "finish_reason": "stop" if result.finished else "length",
                         }
@@ -165,6 +337,10 @@ def serve(mc: MetaCog, port: int) -> None:
                         "thinker_calls": result.trace.thinker_calls,
                         "judge_calls": result.trace.judge_calls,
                         "rounds": len(rounds),
+                        "effort": effort,
+                        "triage": triage,
+                        "rescued": rescued,
+                        "rescue_tokens": rescue_tokens,
                     },
                 },
             )
@@ -174,7 +350,15 @@ def serve(mc: MetaCog, port: int) -> None:
 
 
 def main() -> None:
-    serve(build_mc(), int(env("PORT", "8200")))
+    answer_first = env("ANSWER_FIRST", "") == "on"
+    serve(
+        build_mc(answer_first=answer_first),
+        int(env("PORT", "8200")),
+        effort_routing=env("EFFORT_ROUTING", "") == "on",
+        answer_first=answer_first,
+        answer_rescue=env("ANSWER_RESCUE", "") == "on",
+        gate_log_path=env("GATE_LOG", "") or None,
+    )
 
 
 if __name__ == "__main__":

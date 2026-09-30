@@ -115,6 +115,27 @@ Environment: `THINKER_URL`, `THINKER_MODEL`, `JUDGE_URL`, `PORT`, `MODE`, and th
 generation knobs `N_PATHS`, `NO_CASCADE`, `CASCADE_CONFIDENCE`, `MAX_TOKENS`,
 `TEMPERATURE`, `RACE_CONFIDENCE`, `RACE_SCORE_CHARS`.
 
+v1.3 knobs (all opt-in, off by default):
+
+- `EFFORT_ROUTING=on` — a cheap pre-generation judge call scores how easy the
+  problem looks and routes the thinker's `reasoning_effort` (low/medium/xhigh,
+  bonsai's chat-template field). Effort is only *lowered* from the xhigh
+  default when the judge is confident the problem is easy — a blind
+  medium-effort pass measured worse on hard problems. `EFFORT_LOW_MIN`
+  (default 0.9) and `EFFORT_MED_MIN` (default 0.7) set the triage thresholds.
+- `ANSWER_FIRST=on` — adds a system prompt putting the final answer / complete
+  code before any explanation, so a MAX_TOKENS-truncated reply still yields an
+  answer (two v1.2 tasks returned empty exactly this way). `SYSTEM_PROMPT`
+  overrides the stock text.
+- `ANSWER_RESCUE=on` — when the winning path is pure reasoning with no
+  answer (the "all-think winner" failure mode), fires one low-effort
+  continuation that feeds the reasoning tail back and asks for the answer
+  alone (`RESCUE_MAX_TOKENS`, default 1024). Only fires on otherwise-empty
+  answers, so it is nearly free.
+- `GATE_LOG=/path.jsonl` — appends one telemetry row per request (gate score,
+  branch decision, tokens, calls, effort, triage score, rescue use) so the
+  cascade threshold can be fitted from data instead of guessed.
+
 ## Making it faster
 
 The merge's cost is `N_PATHS` generations per question, so speed work is about
