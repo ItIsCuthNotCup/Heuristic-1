@@ -156,6 +156,26 @@ v1.3 knobs (all opt-in, off by default):
   branch decision, tokens, calls, effort, triage score, rescue use) so the
   cascade threshold can be fitted from data instead of guessed.
 
+v1.4 knobs (all opt-in, off by default; require MetaCog ≥ the `v0.4` branch):
+
+- **Prefer-answerable winners** (in MetaCog itself, always on there): a path
+  that is pure `<think>` reasoning can no longer win the pool or
+  short-circuit the cascade when a sibling actually answered.
+- `BRANCH_RACE=on` — after the cascade fails, the sampled paths stream
+  concurrently race-style: the judge re-scores partial text and losers are
+  cancelled when one crosses `RACE_CONFIDENCE`. The pool is still judged
+  normally; only generation gets faster and cheaper. Requires bonsai
+  `--parallel N`. On tasks where *no* path can reach the bar it instead
+  burns until `race_max_seconds` — more tokens than best-of-n there.
+- `BRANCH_MIN_PATHS=2` — adaptive width: the more the judge doubted the
+  greedy answer, the wider the search (`min + u·(n-1-min)` at uncertainty u).
+- `BRANCH_MAX_TOKENS=4096` — branched (proven-hard) paths may think past
+  `MAX_TOKENS`; the recorded all-think failures all truncate exactly at the
+  cap.
+- `SELF_REPAIR=on` — when the winner's fenced Python doesn't parse, feed the
+  error back for one low-effort fix (`REPAIR_MAX_TOKENS`, default 1024).
+  Only fires on already-answered, already-broken output.
+
 ## Making it faster
 
 The merge's cost is `N_PATHS` generations per question, so speed work is about
