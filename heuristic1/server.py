@@ -40,10 +40,12 @@ ANSWER_FIRST_SYSTEM = (
 __all__ = [
     "MODEL_ID",
     "ANSWER_FIRST_SYSTEM",
+    "RESCUE_SUFFIX",
     "build_mc",
     "clean_answer",
     "effort_for",
     "gate_log",
+    "rescue_answer",
     "serve",
     "main",
 ]
@@ -55,7 +57,40 @@ def env(name: str, default: str) -> str:
 
 def clean_answer(text: str) -> str:
     """Strip <think>...</think> reasoning blocks the thinker may leak."""
-    return re.sub(r"<think>.*?</think>\s*", "", text, flags=re.S).strip()
+    out = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.S)
+    # An unclosed trailing think block means the stream was cut mid-reasoning:
+    # everything after the tag is think text, not an answer.
+    return re.sub(r"<think>.*", "", out, flags=re.S).strip()
+
+
+RESCUE_SUFFIX = (
+    "\n\nYour analysis so far:\n{tail}\n\n"
+    "Now output only the final answer or complete code in a single code "
+    "block — no explanation."
+)
+
+
+def rescue_answer(thinker: Any, problem: str, winner_text: str) -> tuple[str, int]:
+    """One low-effort continuation when the merge's winner is pure reasoning.
+
+    Feeds the tail of the winning path's reasoning back and asks for the
+    answer alone. Returns (answer text, tokens used); ("", 0) on failure.
+    """
+    tail = re.sub(r"</?think>", "", winner_text)[-1500:]
+    try:
+        gens = thinker.generate(
+            problem + RESCUE_SUFFIX.format(tail=tail),
+            "",
+            n=1,
+            max_tokens=int(env("RESCUE_MAX_TOKENS", "1024")),
+            temperature=0.2,
+        )
+    except Exception as e:  # noqa: BLE001 - rescue is best-effort
+        print(f"rescue failed: {e}", flush=True)
+        return "", 0
+    if not gens:
+        return "", 0
+    return gens[0].text, gens[0].tokens
 
 
 def build_mc(
@@ -158,6 +193,7 @@ def serve(
     *,
     effort_routing: bool | None = None,
     answer_first: bool | None = None,
+    answer_rescue: bool | None = None,
     gate_log_path: str | None = None,
 ) -> None:
     """Run the OpenAI-compatible server until interrupted.
@@ -165,13 +201,17 @@ def serve(
     ``effort_routing`` (env EFFORT_ROUTING=on) adds a cheap pre-generation
     judge triage and rebuilds the merge per request with the routed
     ``reasoning_effort``. ``answer_first`` (env ANSWER_FIRST=on) serves the
-    answer-first system prompt. ``gate_log_path`` (env GATE_LOG) appends a
+    answer-first system prompt. ``answer_rescue`` (env ANSWER_RESCUE=on)
+    fires a single low-effort continuation when the winning path is pure
+    reasoning with no answer. ``gate_log_path`` (env GATE_LOG) appends a
     JSONL telemetry row per request.
     """
     if effort_routing is None:
         effort_routing = env("EFFORT_ROUTING", "") == "on"
     if answer_first is None:
         answer_first = env("ANSWER_FIRST", "") == "on"
+    if answer_rescue is None:
+        answer_rescue = env("ANSWER_RESCUE", "") == "on"
     if gate_log_path is None:
         gate_log_path = env("GATE_LOG", "") or None
 
@@ -227,6 +267,18 @@ def serve(
                 result = use_mc.run(problem)
             except Exception as e:  # noqa: BLE001
                 return self._send(502, {"error": f"pipeline failed: {e}"})
+            answer_text = clean_answer(result.answer)
+            rescued = False
+            rescue_tokens = 0
+            if answer_rescue and not answer_text:
+                rescue_thinker = build_mc(effort="low").thinker
+                rescued_text, rescue_tokens = rescue_answer(
+                    rescue_thinker, problem, result.answer
+                )
+                rescued_text = clean_answer(rescued_text)
+                if rescued_text:
+                    answer_text = rescued_text
+                    rescued = True
             dt = time.time() - t0
 
             rounds = result.trace.rounds
@@ -249,6 +301,8 @@ def serve(
                         "mode": use_mc.config.mode,
                         "effort": effort,
                         "triage": triage,
+                        "rescued": rescued,
+                        "rescue_tokens": rescue_tokens,
                     },
                 )
             self._send(
@@ -263,7 +317,7 @@ def serve(
                             "index": 0,
                             "message": {
                                 "role": "assistant",
-                                "content": clean_answer(result.answer),
+                                "content": answer_text,
                             },
                             "finish_reason": "stop" if result.finished else "length",
                         }
@@ -285,6 +339,8 @@ def serve(
                         "rounds": len(rounds),
                         "effort": effort,
                         "triage": triage,
+                        "rescued": rescued,
+                        "rescue_tokens": rescue_tokens,
                     },
                 },
             )
@@ -300,6 +356,7 @@ def main() -> None:
         int(env("PORT", "8200")),
         effort_routing=env("EFFORT_ROUTING", "") == "on",
         answer_first=answer_first,
+        answer_rescue=env("ANSWER_RESCUE", "") == "on",
         gate_log_path=env("GATE_LOG", "") or None,
     )
 

@@ -127,9 +127,14 @@ v1.3 knobs (all opt-in, off by default):
   code before any explanation, so a MAX_TOKENS-truncated reply still yields an
   answer (two v1.2 tasks returned empty exactly this way). `SYSTEM_PROMPT`
   overrides the stock text.
+- `ANSWER_RESCUE=on` — when the winning path is pure reasoning with no
+  answer (the "all-think winner" failure mode), fires one low-effort
+  continuation that feeds the reasoning tail back and asks for the answer
+  alone (`RESCUE_MAX_TOKENS`, default 1024). Only fires on otherwise-empty
+  answers, so it is nearly free.
 - `GATE_LOG=/path.jsonl` — appends one telemetry row per request (gate score,
-  branch decision, tokens, calls, effort, triage score) so the cascade
-  threshold can be fitted from data instead of guessed.
+  branch decision, tokens, calls, effort, triage score, rescue use) so the
+  cascade threshold can be fitted from data instead of guessed.
 
 ## Making it faster
 
